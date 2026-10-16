@@ -107,7 +107,12 @@ export function createApp({ outputDir = outputRoot, generate = generateModel } =
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const port = Number(process.env.PORT || 3000);
   const app = createApp();
-  app.listen(port, '0.0.0.0', () => {
-    process.stdout.write(`Foto a 3D: http://localhost:${port}\nModels for Blender: ${path.join(outputRoot, 'models')}\n`);
+  const server = app.listen(port, '0.0.0.0', error => {
+    if (error) {
+      process.stderr.write(`Could not start Foto a 3D: ${error.code || 'listen error'}\n`);
+      process.exitCode = 1;
+      return;
+    }
+    process.stdout.write(`Foto a 3D: http://localhost:${server.address().port}\nModels for Blender: ${path.join(outputRoot, 'models')}\n`);
   });
 }

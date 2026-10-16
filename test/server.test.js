@@ -1,8 +1,10 @@
 import assert from 'node:assert/strict';
+import { spawn } from 'node:child_process';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, test } from 'node:test';
+import { fileURLToPath } from 'node:url';
 import { createApp } from '../src/server.js';
 
 const servers = [];
@@ -20,7 +22,7 @@ async function start(generate) {
   const server = createApp({ outputDir, generate }).listen(0, '127.0.0.1');
   servers.push(server);
   await new Promise(resolve => server.once('listening', resolve));
-  return { outputDir, url: `http://127.0.0.1:${server.address().port}` };
+  return { outputDir, port: server.address().port, url: `http://127.0.0.1:${server.address().port}` };
 }
 
 function photoForm(data = png, filename = 'photo.png') {
@@ -88,4 +90,21 @@ test('allows only one credit-consuming job at a time and exposes a safe failure'
   assert.equal(job.error, 'Tripo failed');
   const model = await fetch(`${url}/api/jobs/${id}/model`);
   assert.equal(model.status, 404);
+});
+
+test('reports a startup error instead of announcing a busy port as ready', async () => {
+  const { port } = await start(async () => {});
+  const child = spawn(process.execPath, ['src/server.js'], {
+    cwd: path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..'),
+    env: { ...process.env, PORT: String(port) },
+    stdio: ['ignore', 'pipe', 'pipe']
+  });
+  let stdout = '';
+  let stderr = '';
+  child.stdout.on('data', chunk => { stdout += chunk; });
+  child.stderr.on('data', chunk => { stderr += chunk; });
+  const code = await new Promise(resolve => child.once('exit', resolve));
+  assert.equal(code, 1);
+  assert.doesNotMatch(stdout, /Foto a 3D:/);
+  assert.match(stderr, /EADDRINUSE/);
 });
