@@ -8,7 +8,8 @@
   },
   "scripts": {
     "start": "node src/server.js",
-    "test": "node --test"
+    "test": "node --test",
+    "test:blender": "blender --background --factory-startup --python-exit-code 1 --python test/blender_addon_check.py"
   },
   "dependencies": {
     "@google/model-viewer": "^4.4.0",
