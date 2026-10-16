@@ -1,0 +1,15 @@
+/node_modules/
+/output/
+/.tripo/
+/.env
+/.env.*
+!.env.example
+*.key
+*.pem
+*.p12
+*.pfx
+*.crt
+*.log
+__pycache__/
+*.py[cod]
+.DS_Store
