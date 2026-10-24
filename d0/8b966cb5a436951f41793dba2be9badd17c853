@@ -1,0 +1,22 @@
+public/app.js
+  h_6241add5026f5b 4-5,20-123,133,139-147,153,163-168
+public/index.html
+  h_6241add5026f5b 17-23,25
+public/styles.css
+  h_6241add5026f5b 55-78,86-87,98-102
+src/server.js
+  h_6241add5026f5b 54,62-68,72-73,75-87,110-111,113
+src/tripo.js
+  h_6241add5026f5b 64-66
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "d08b966cb5a436951f41793dba2be9badd17c853",
+  "prompts": {},
+  "humans": {
+    "h_6241add5026f5b": {
+      "author": "Edu Navajas <eduardonco@ext.inditex.com>"
+    }
+  }
+}
