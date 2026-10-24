@@ -31,29 +31,40 @@ function photoForm(data = png, filename = 'photo.png') {
   return form;
 }
 
-async function waitForJob(url, id, target) {
+async function waitFor(url, id, predicate) {
   for (let attempt = 0; attempt < 100; attempt++) {
     const response = await fetch(`${url}/api/jobs/${id}`);
     const job = await response.json();
-    if (job.status === target) return job;
+    if (predicate(job)) return job;
     await new Promise(resolve => setTimeout(resolve, 20));
   }
-  assert.fail(`Job did not reach ${target}`);
+  assert.fail('Job did not reach the expected state');
 }
 
-test('serves the mobile page and accepts a photo without contacting Tripo', async () => {
+const waitForJob = (url, id, target) => waitFor(url, id, job => job.status === target);
+
+/** Fake generate body: writes a distinct GLB numbered by call order. */
+async function fakeModel(workDir, index) {
+  await fs.mkdir(workDir, { recursive: true });
+  const modelPath = path.join(workDir, `model-${index}.glb`);
+  await fs.writeFile(modelPath, Buffer.from(`glTF-${index}`));
+  return { modelPath, taskId: `task-${index}` };
+}
+
+test('serves the SPA shell and accepts a photo without contacting Tripo', async () => {
   let receivedPhoto;
-  const { outputDir, url } = await start(async ({ photoPath, workDir }) => {
-    receivedPhoto = await fs.readFile(photoPath);
-    await fs.mkdir(workDir, { recursive: true });
-    const modelPath = path.join(workDir, 'model.glb');
-    await fs.writeFile(modelPath, Buffer.from('glTF-test'));
-    return { modelPath };
+  const { outputDir, url } = await start(async options => {
+    receivedPhoto = await fs.readFile(options.photoPath);
+    return fakeModel(options.workDir, 1);
   });
   const page = await fetch(url);
   const html = await page.text();
   assert.equal(page.status, 200);
-  assert.match(html, /accept="image\/\*" capture="environment"/);
+  assert.match(html, /<div id="root">/);
+  // SPA fallback: client-side routes and refreshes serve the same shell.
+  const deep = await fetch(`${url}/vista/inexistente`);
+  assert.equal(deep.status, 200);
+  assert.match(await deep.text(), /<div id="root">/);
 
   const response = await fetch(`${url}/api/jobs`, { method: 'POST', body: photoForm() });
   assert.equal(response.status, 202);
@@ -61,11 +72,11 @@ test('serves the mobile page and accepts a photo without contacting Tripo', asyn
   const job = await waitForJob(url, id, 'ready');
   assert.deepEqual(receivedPhoto, png);
   assert.equal(job.modelUrl, `/api/jobs/${id}/model`);
-  assert.deepEqual(await fs.readFile(path.join(outputDir, 'models', `${id}.glb`)), Buffer.from('glTF-test'));
+  assert.deepEqual(await fs.readFile(path.join(outputDir, 'models', `${id}.glb`)), Buffer.from('glTF-1'));
   const model = await fetch(`${url}${job.modelUrl}`);
   assert.equal(model.status, 200);
   assert.match(model.headers.get('content-type'), /model\/gltf-binary/);
-  assert.equal(await model.text(), 'glTF-test');
+  assert.equal(await model.text(), 'glTF-1');
 });
 
 test('rejects unsupported files and cross-origin requests', async () => {
@@ -90,6 +101,95 @@ test('allows only one credit-consuming job at a time and exposes a safe failure'
   assert.equal(job.error, 'Tripo failed');
   const model = await fetch(`${url}/api/jobs/${id}/model`);
   assert.equal(model.status, 404);
+});
+
+test('fast job with rig chains the CLI rig and exposes real progress phases', async () => {
+  let release;
+  let received;
+  const { url } = await start(async ({ model, texture, rig, onProgress, workDir }) => {
+    received = { model, texture, rig };
+    onProgress({ phase: 'image_to_model', pct: 37, taskId8: 'abc123ab' });
+    onProgress({ phase: 'animate_rig', pct: 80, taskId8: 'abc123ab' });
+    await new Promise(resolve => { release = resolve; });
+    return fakeModel(workDir, 1);
+  });
+  const form = photoForm();
+  form.append('quality', 'fast');
+  form.append('texture', 'off');
+  form.append('rig', 'on');
+  const response = await fetch(`${url}/api/jobs`, { method: 'POST', body: form });
+  assert.equal(response.status, 202);
+  const { id } = await response.json();
+
+  const rigging = await waitForJob(url, id, 'rigging');
+  assert.equal(rigging.phase, 'rigging');
+  assert.equal(rigging.rigProgress, 80);
+  assert.equal(rigging.progress, 37);
+  assert.equal(received.texture, 'off');
+  assert.equal(received.rig, true);
+
+  release();
+  const job = await waitForJob(url, id, 'ready');
+  assert.equal(job.hasRig, true);
+  assert.equal(job.modelUrl, `/api/jobs/${id}/model`);
+  assert.equal(received.model, 'tripo-p1');
+});
+
+test('best quality with rig publishes fast, hq and rigged models in sequence', async () => {
+  const calls = [];
+  const { outputDir, url } = await start(async ({ model, input, rig, workDir }) => {
+    calls.push({ model, input, rig: Boolean(rig) });
+    return fakeModel(workDir, calls.length);
+  });
+  const form = photoForm();
+  form.append('quality', 'best');
+  form.append('texture', 'on');
+  form.append('rig', 'on');
+  const response = await fetch(`${url}/api/jobs`, { method: 'POST', body: form });
+  const { id } = await response.json();
+  const job = await waitForJob(url, id, 'ready');
+
+  // One publish per artifact: fast, hq and rigged (each is one Blender import).
+  assert.deepEqual(calls, [
+    { model: 'tripo-p1', input: undefined, rig: false },
+    { model: 'tripo-v3.1', input: undefined, rig: false },
+    { model: null, input: 'task-2', rig: true }
+  ]);
+  const models = (await fs.readdir(path.join(outputDir, 'models'))).sort();
+  assert.deepEqual(models, [`${id}-hq-rigged.glb`, `${id}-hq.glb`, `${id}.glb`]);
+  assert.equal(job.hasHq, true);
+  assert.equal(job.hasRig, true);
+  assert.equal(job.improving, true);
+  assert.equal(job.quality, 'best');
+  assert.equal(job.modelVersion, 3);
+  assert.equal(job.modelUrl, `/api/jobs/${id}/model?variant=rigged`);
+  assert.equal(job.riggedModelUrl, `/api/jobs/${id}/model?variant=rigged`);
+  const rigged = await fetch(`${url}/api/jobs/${id}/model?variant=rigged`);
+  assert.equal(await rigged.text(), 'glTF-3');
+});
+
+test('best quality without rig keeps the two-stage fast then hq flow', async () => {
+  const calls = [];
+  const { outputDir, url } = await start(async ({ model, rig, workDir }) => {
+    calls.push({ model, rig: Boolean(rig) });
+    return fakeModel(workDir, calls.length);
+  });
+  const form = photoForm();
+  form.append('quality', 'best');
+  const response = await fetch(`${url}/api/jobs`, { method: 'POST', body: form });
+  const { id } = await response.json();
+  const job = await waitForJob(url, id, 'ready');
+
+  assert.deepEqual(calls, [
+    { model: 'tripo-p1', rig: false },
+    { model: 'tripo-v3.1', rig: false }
+  ]);
+  const models = (await fs.readdir(path.join(outputDir, 'models'))).sort();
+  assert.deepEqual(models, [`${id}-hq.glb`, `${id}.glb`]);
+  assert.equal(job.hasHq, true);
+  assert.equal(job.hasRig, false);
+  assert.equal(job.modelVersion, 2);
+  assert.equal(job.modelUrl, `/api/jobs/${id}/model?variant=hq`);
 });
 
 test('reports a startup error instead of announcing a busy port as ready', async () => {
