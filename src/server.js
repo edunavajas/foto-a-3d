@@ -51,7 +51,7 @@ export function createApp({ outputDir = outputRoot, generate = generateModel } =
 
       active = true;
       const id = crypto.randomUUID();
-      const job = { id, status: 'generating', error: null, modelUrl: null };
+      const job = { id, status: 'generating', error: null, modelUrl: null, modelVersion: 0, improving: req.body.quality === 'best' };
       jobs.set(id, job);
       await Promise.all([fs.mkdir(photosDir, { recursive: true }), fs.mkdir(workRoot, { recursive: true }), fs.mkdir(modelsDir, { recursive: true })]);
       const photoPath = path.join(photosDir, `${id}${extension}`);
@@ -59,15 +59,32 @@ export function createApp({ outputDir = outputRoot, generate = generateModel } =
       await fs.writeFile(photoPath, req.file.buffer, { flag: 'wx' });
       res.status(202).json({ id, status: job.status });
 
+      const publish = async (modelPath, name) => {
+        const finalPath = path.join(modelsDir, name);
+        const partialPath = `${finalPath}.part`;
+        await fs.copyFile(modelPath, partialPath);
+        await fs.rename(partialPath, finalPath);
+      };
+
       void (async () => {
         try {
           const { modelPath } = await generate({ photoPath, workDir, cwd: root });
-          const finalPath = path.join(modelsDir, `${id}.glb`);
-          const partialPath = `${finalPath}.part`;
-          await fs.copyFile(modelPath, partialPath);
-          await fs.rename(partialPath, finalPath);
-          job.status = 'ready';
+          await publish(modelPath, `${id}.glb`);
+          job.modelVersion = 1;
           job.modelUrl = `/api/jobs/${id}/model`;
+          job.status = 'ready';
+          if (job.improving) {
+            job.status = 'improving';
+            try {
+              const refined = await generate({ photoPath, workDir, cwd: root, model: 'tripo-v3.1' });
+              await publish(refined.modelPath, `${id}-hq.glb`);
+              job.modelVersion = 2;
+              job.modelUrl = `/api/jobs/${id}/model?variant=hq`;
+            } catch {
+              // The fast model is already delivered; the upgrade is a bonus, not a failure.
+            }
+            job.status = 'ready';
+          }
         } catch (error) {
           job.status = 'error';
           job.error = error?.message || 'Model generation failed.';
@@ -90,9 +107,10 @@ export function createApp({ outputDir = outputRoot, generate = generateModel } =
 
   app.get('/api/jobs/:id/model', (req, res) => {
     const job = jobs.get(req.params.id);
-    if (!job || job.status !== 'ready') return res.sendStatus(404);
+    if (!job || (job.status !== 'ready' && job.status !== 'improving')) return res.sendStatus(404);
+    const name = req.query.variant === 'hq' && job.modelVersion === 2 ? `${job.id}-hq.glb` : `${job.id}.glb`;
     res.type('model/gltf-binary');
-    res.sendFile(path.join(modelsDir, `${job.id}.glb`));
+    res.sendFile(path.join(modelsDir, name));
   });
 
   app.use((error, req, res, next) => {

@@ -52,6 +52,30 @@ h1 {
 .visually-hidden:focus-visible + .capture-button { outline: 3px solid #17231d; outline-offset: 4px; }
 .visually-hidden:disabled + .capture-button { background: #6c7770; cursor: not-allowed; }
 
+.quality {
+  display: flex;
+  justify-content: center;
+  gap: .5rem;
+  margin: 1.1rem 0 0;
+  padding: 0;
+  border: 0;
+}
+
+.quality input { position: absolute; opacity: 0; pointer-events: none; }
+
+.quality label {
+  padding: .45rem 1.2rem;
+  border: 1px solid #ccd7cf;
+  border-radius: 999px;
+  background: #fff;
+  font-size: .95rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.quality input:checked + label { background: #145a3a; border-color: #145a3a; color: #fff; }
+.quality input:focus-visible + label { outline: 3px solid #17231d; outline-offset: 2px; }
+
 #status {
   min-height: 1.5rem;
   margin: 1.25rem 0;
@@ -59,7 +83,8 @@ h1 {
   line-height: 1.5;
 }
 
-#preview {
+#preview,
+#scan {
   display: block;
   width: 100%;
   height: min(58vh, 32rem);
@@ -70,4 +95,8 @@ h1 {
   background: #eef2ed;
 }
 
-#preview[hidden] { display: none; }
+#preview[hidden],
+#scan[hidden] { display: none; }
+
+/* The scan canvas keeps a square bitmap; contain stops portrait boxes stretching it. */
+#scan { object-fit: contain; }

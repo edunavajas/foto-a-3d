@@ -61,8 +61,9 @@ function runCommand(args, { binary, cwd }) {
   });
 }
 
-export async function generateModel({ photoPath, workDir, binary = 'tripo', cwd = process.cwd() }) {
-  const args = ['make', photoPath, '--json', '--yes', '--no-open', '--out', workDir];
+export async function generateModel({ photoPath, workDir, binary = 'tripo', cwd = process.cwd(), model = 'tripo-p1' }) {
+  // tripo-p1: low-poly, mesh in seconds and cheaper credits; v3.1 is high fidelity but slow.
+  const args = ['make', photoPath, '--model', model, '--json', '--yes', '--no-open', '--out', workDir];
   const plan = await runCommand([...args, '--dry-run'], { binary, cwd });
   if (plan.valid !== true || plan.errors?.length) {
     throw new TripoError('Tripo rejected the generation plan.', 2);
